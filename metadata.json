@@ -1,0 +1,6 @@
+{
+  "name": "Morrow — Editorial Shopping Assistant",
+  "description": "A refined, catalogue-grounded shopping workspace with verifiable product evidence, store policies, and side-by-side comparisons.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
