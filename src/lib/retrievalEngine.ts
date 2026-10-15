@@ -268,6 +268,103 @@ export function executeCatalogueSearch(intent: QueryIntent): { products: Product
   };
 }
 
+function synthesizeEditorialAnswer(
+  rawQuery: string,
+  products: Product[],
+  intent: QueryIntent
+): string {
+  const q = rawQuery.toLowerCase();
+
+  // 1. Sizing and Fit inquiries
+  if (/size|sizing|fit|wide feet|snug|true to size|length|taper/i.test(q)) {
+    const p = products[0];
+    if (p) {
+      let fitGuidance = `Regarding sizing and silhouette: **${p.name}** [${p.id}] features a **${p.fit}**.`;
+      if (p.category === 'Footwear') {
+        if (p.id === 'CAT-SHOE-02') {
+          fitGuidance += ` For the PaceKnit, we recommend sizing up a half-size if you have wider feet or prefer a slightly roomier toe box.`;
+        } else if (p.id === 'CAT-SHOE-01') {
+          fitGuidance += ` The Stratus Flow fits true to standard athletic shoe sizing with a standard D width.`;
+        }
+      } else if (p.category === 'Shirts') {
+        fitGuidance += ` It is cut for natural movement without excess billowing, structured across shoulders and chest.`;
+      }
+      fitGuidance += `\n\nAll purchases include our 30-day return & exchange window [Policy §1.1] with complimentary doorstep reverse pickup if the fit isn't perfect.`;
+      return fitGuidance;
+    }
+  }
+
+  // 2. Weather, Climate & Seasonality inquiries
+  if (/summer|hot|warm weather|humidity|rain|winter|cold|monsoon|breeze/i.test(q)) {
+    if (/summer|hot|warm|heat|humid/i.test(q)) {
+      const voile = products.find(p => p.id === 'CAT-SHIRT-03') || CATALOGUE.find(p => p.id === 'CAT-SHIRT-03');
+      const linen = products.find(p => p.id === 'CAT-SHIRT-05') || CATALOGUE.find(p => p.id === 'CAT-SHIRT-05');
+      return `For warm weather and high humidity, the ideal choices in our catalogue are lightweight open weaves:
+
+· **${voile?.name}** [${voile?.id}] (${formatINR(voile?.price || 1599)}): Made from featherlight 95 GSM combed cotton with high airflow.
+· **${linen?.name}** [${linen?.id}] (${formatINR(linen?.price || 1899)}): 55% French flax linen / 45% cotton blend providing natural cooling.
+
+Heavier weaves like the Brushed Oxford (160 GSM) [CAT-SHIRT-01] or Slub Workshirt (210 GSM) [CAT-SHIRT-02] are better suited for temperate or climate-controlled environments.`;
+    }
+    if (/rain|waterproof|wet|monsoon/i.test(q)) {
+      const jacket = CATALOGUE.find(p => p.id === 'CAT-OUT-01')!;
+      const trail = CATALOGUE.find(p => p.id === 'CAT-SHOE-03')!;
+      return `For wet weather and precipitation protection, Morrow features two dedicated weather-resistant pieces:
+
+· **${jacket.name}** [${jacket.id}] (${formatINR(jacket.price)}): Heavy 10oz organic cotton canvas coated in weather-resistant paraffin wax to shed rain.
+· **${trail.name}** [${trail.id}] (${formatINR(trail.price)}): Built with a waterproof Gore-Tex membrane and Vibram MegaGrip lugs for slippery surfaces.`;
+    }
+  }
+
+  // 3. Care, Washing & Maintenance
+  if (/care|wash|washing|clean|iron|shrink|dry clean|maintenance/i.test(q)) {
+    const p = products[0];
+    if (p) {
+      return `Here are the verified care instructions for **${p.name}** [${p.id}]:
+
+· **Fabric**: ${p.material}
+· **Care**: ${p.care}
+· **Warranty**: ${p.warranty}
+
+All our garments are pre-shrunk and garment-washed to preserve their dimensions after gentle home laundering.`;
+    }
+  }
+
+  // 4. Fabric & Material Provenance inquiries
+  if (/fabric|material|gsm|weave|cotton|linen|leather|wool|provenance/i.test(q)) {
+    const list = products.slice(0, 3).map(p => 
+      `· **${p.name}** [${p.id}]: Crafted from **${p.material}** (${p.attributes.join(' · ')}).`
+    ).join('\n');
+
+    return `Here are the material specifications for our verified pieces:
+
+${list}
+
+Morrow uses exclusively GOTS-certified organic cotton, REACH-compliant vegetable dyes, and zero synthetic poly-blends.`;
+  }
+
+  // 5. Stock inquiries
+  if (intent.inStockOnly || /in stock|available|units left/i.test(q)) {
+    const stockList = products.map(p => 
+      `· **${p.name}** [${p.id}]: ${p.stock > 0 ? `${p.stock} units in stock` : 'Currently out of stock'} — ${formatINR(p.price)}`
+    ).join('\n');
+
+    return `Live warehouse inventory for verified ${intent.category || 'catalogue'} items:
+
+${stockList}
+
+All in-stock orders confirmed on business days dispatch within 24 hours from our Bengaluru center [Policy §2.1].`;
+  }
+
+  // 6. Price-constrained search (e.g. "under ₹2,000")
+  if (intent.maxPrice !== undefined) {
+    return `Found ${products.length} verified ${intent.category?.toLowerCase() || 'item'}${products.length === 1 ? '' : 's'} priced under ${formatINR(intent.maxPrice)} in our current collection. Every piece features certified natural fibers with full craftsmanship backing [Policy §4.1]:`;
+  }
+
+  // 7. Standard catalogue inquiry
+  return `Found ${products.length} verified ${intent.category?.toLowerCase() || 'product'}${products.length === 1 ? '' : 's'} matching your inquiry in our collection:`;
+}
+
 export function processUserQuery(
   rawQuery: string,
   lastEvidence?: EvidenceData,
@@ -529,17 +626,8 @@ You can click any product row below or use the Compare modal for full technical 
     };
   }
 
-  // Synthesize clean editorial prose
-  let narrative = '';
-  if (intent.category === 'Shirts' && intent.maxPrice) {
-    narrative = `Found ${products.length} cotton ${products.length === 1 ? 'shirt' : 'shirts'} under ${formatINR(intent.maxPrice)} in our current catalogue. All pieces are crafted from 100% natural organic cotton with zero synthetic blends:`;
-  } else if (intent.inStockOnly && intent.category === 'Footwear') {
-    narrative = `Found ${products.length} running ${products.length === 1 ? 'model' : 'models'} currently in stock with confirmed warehouse availability:`;
-  } else if (intent.category) {
-    narrative = `Found ${products.length} verified ${intent.category.toLowerCase()} matching your request:`;
-  } else {
-    narrative = `Found ${products.length} products in our collection matching your criteria:`;
-  }
+  // Synthesize rich, grounded editorial prose addressing the user's specific question
+  const narrative = synthesizeEditorialAnswer(rawQuery, products, intent);
 
   return {
     id: `msg-${Date.now()}`,
