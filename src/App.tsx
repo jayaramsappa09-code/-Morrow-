@@ -8,8 +8,8 @@ import { ComparisonModal } from './components/ComparisonModal';
 import { CatalogueDrawer } from './components/CatalogueDrawer';
 import { PoliciesModal } from './components/PoliciesModal';
 import { BagDrawer } from './components/BagDrawer';
-import { Message, Product, CartItem, EvidenceData } from './types';
-import { CATALOGUE, findProductById } from './data/catalogue';
+import { Message, Product, CartItem, EvidenceData, PriceAlert } from './types';
+import { CATALOGUE, findProductById, formatINR } from './data/catalogue';
 import { processUserQuery } from './lib/retrievalEngine';
 import { getRecommendedProducts } from './lib/recommendations';
 import { Check } from 'lucide-react';
@@ -43,6 +43,16 @@ export default function App() {
     }
   });
 
+  // Persistent price alerts across sessions
+  const [priceAlerts, setPriceAlerts] = useState<PriceAlert[]>(() => {
+    try {
+      const stored = localStorage.getItem('mrw_price_alerts');
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+
   // Calculate recommended products dynamically based on search history
   const recommendations = useMemo(() => {
     return getRecommendedProducts(searchHistory);
@@ -67,7 +77,7 @@ export default function App() {
               content: q,
               timestamp: 'Saved'
             });
-            const reply = processUserQuery(q, lastEv);
+            const reply = processUserQuery(q, lastEv, priceAlerts);
             lastEv = reply.evidence;
             restoredMessages.push(reply);
           }
@@ -184,9 +194,9 @@ export default function App() {
       return updated;
     });
 
-    // 2. Process query with catalogue retrieval engine
+    // 2. Process query with catalogue retrieval engine (with access to priceAlerts)
     setTimeout(() => {
-      const assistantMessage = processUserQuery(queryText, currentEvidence);
+      const assistantMessage = processUserQuery(queryText, currentEvidence, priceAlerts);
 
       setMessages((prev) => [...prev, assistantMessage]);
       setIsLoading(false);
@@ -261,6 +271,102 @@ export default function App() {
     setCart([]);
   };
 
+  // Price Alert Handlers
+  const handleSetPriceAlert = (product: Product, targetPrice: number) => {
+    setPriceAlerts((prev) => {
+      const filtered = prev.filter((a) => a.productId !== product.id);
+      const newAlert: PriceAlert = {
+        id: `alt-${Date.now()}`,
+        productId: product.id,
+        productName: product.name,
+        currentPrice: product.price,
+        targetPrice,
+        createdAt: new Date().toISOString(),
+        status: 'active'
+      };
+      const updated = [...filtered, newAlert];
+      try {
+        localStorage.setItem('mrw_price_alerts', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    setToastMessage(`Price alert set for ${product.name} at ≤ ${formatINR(targetPrice)}`);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  const handleRemovePriceAlert = (productId: string) => {
+    setPriceAlerts((prev) => {
+      const updated = prev.filter((a) => a.productId !== productId);
+      try {
+        localStorage.setItem('mrw_price_alerts', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+    setToastMessage('Price alert removed');
+    setTimeout(() => setToastMessage(null), 2500);
+  };
+
+  const handleSimulatePriceDrop = (alert: PriceAlert) => {
+    const newPrice = alert.targetPrice;
+    const now = new Date();
+    const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    // Update product price in cart
+    setCart((prev) =>
+      prev.map((item) =>
+        item.product.id === alert.productId
+          ? { ...item, product: { ...item.product, price: newPrice, originalPrice: alert.currentPrice } }
+          : item
+      )
+    );
+
+    // Mark alert as triggered
+    setPriceAlerts((prev) => {
+      const updated = prev.map((a) =>
+        a.productId === alert.productId
+          ? { ...a, status: 'triggered' as const, triggeredPrice: newPrice }
+          : a
+      );
+      try {
+        localStorage.setItem('mrw_price_alerts', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    // Notify user via assistant message in conversation
+    const dropPercent = Math.round(((alert.currentPrice - newPrice) / alert.currentPrice) * 100);
+    const notificationMessage: Message = {
+      id: `alert-msg-${Date.now()}`,
+      role: 'assistant',
+      content: `Price Drop Notification: **${alert.productName}** [${alert.productId}] in your Shopping Bag has dropped from ${formatINR(alert.currentPrice)} to **${formatINR(newPrice)}** (${dropPercent}% off), reaching your configured threshold!
+
+The discounted price has been updated in your Shopping Bag.`,
+      timestamp: timeString,
+      isPriceAlertNotification: true,
+      alertDetails: {
+        ...alert,
+        status: 'triggered',
+        triggeredPrice: newPrice
+      },
+      citations: [
+        {
+          id: alert.productId,
+          type: 'product',
+          label: `[${alert.productId}]`,
+          title: alert.productName,
+          targetId: alert.productId,
+          preview: `Discounted to ${formatINR(newPrice)}`
+        }
+      ]
+    };
+
+    setMessages((prev) => [...prev, notificationMessage]);
+    setIsBagOpen(false); // Return smoothly to conversation to view alert notification
+    setToastMessage(`Price drop notification posted in conversation for ${alert.productName}`);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
   const compareProducts = selectedCompareIds
     .map((id) => findProductById(id))
     .filter((p): p is Product => p !== undefined);
@@ -307,6 +413,7 @@ export default function App() {
               cartProductIds={cartProductIds}
               onCopyShareLink={handleCopyShareLink}
               isLinkCopied={isLinkCopied}
+              onOpenBag={() => setIsBagOpen(true)}
             />
           )}
         </main>
@@ -362,7 +469,7 @@ export default function App() {
         onAskPolicyInChat={(q) => handleSendMessage(q)}
       />
 
-      {/* Shopping Bag Drawer */}
+      {/* Shopping Bag Drawer with Price Alert feature */}
       <BagDrawer
         isOpen={isBagOpen}
         onClose={() => setIsBagOpen(false)}
@@ -370,6 +477,10 @@ export default function App() {
         onUpdateQuantity={handleUpdateCartQuantity}
         onRemoveItem={handleRemoveCartItem}
         onClearBag={handleClearBag}
+        priceAlerts={priceAlerts}
+        onSetPriceAlert={handleSetPriceAlert}
+        onRemovePriceAlert={handleRemovePriceAlert}
+        onSimulatePriceDrop={handleSimulatePriceDrop}
       />
     </div>
   );

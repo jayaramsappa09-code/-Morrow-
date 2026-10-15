@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Message, Product, Citation } from '../types';
 import { ProductRow } from './ProductRow';
-import { Copy, Check, RotateCcw, ShieldCheck, HelpCircle, Link2 } from 'lucide-react';
+import { Copy, Check, RotateCcw, ShieldCheck, HelpCircle, Link2, BellRing, TrendingDown } from 'lucide-react';
+import { formatINR } from '../data/catalogue';
 
 interface ConversationAreaProps {
   messages: Message[];
@@ -15,6 +16,7 @@ interface ConversationAreaProps {
   cartProductIds: string[];
   onCopyShareLink: () => void;
   isLinkCopied: boolean;
+  onOpenBag?: () => void;
 }
 
 export const ConversationArea: React.FC<ConversationAreaProps> = ({
@@ -28,7 +30,8 @@ export const ConversationArea: React.FC<ConversationAreaProps> = ({
   onAddToCart,
   cartProductIds,
   onCopyShareLink,
-  isLinkCopied
+  isLinkCopied,
+  onOpenBag
 }) => {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
 
@@ -160,6 +163,12 @@ export const ConversationArea: React.FC<ConversationAreaProps> = ({
                         Scope Boundary
                       </span>
                     )}
+                    {message.isPriceAlertNotification && (
+                      <span className="text-[10px] font-mono text-[#246B52] bg-[#F0F6F3] px-1.5 py-0.5 rounded border border-[#246B52]/30 flex items-center gap-1">
+                        <BellRing className="w-2.5 h-2.5" />
+                        <span>Price Drop Alert</span>
+                      </span>
+                    )}
                     {message.clarificationOptions && (
                       <span className="text-[10px] font-mono text-blue-800 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
                         Clarification
@@ -192,6 +201,37 @@ export const ConversationArea: React.FC<ConversationAreaProps> = ({
                     </p>
                   ))}
                 </div>
+
+                {/* Price Alert Notification Card */}
+                {message.isPriceAlertNotification && message.alertDetails && (
+                  <div className="p-3.5 rounded-lg bg-[#F0F6F3] border border-[#246B52]/30 space-y-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-[#191919] flex items-center gap-1.5">
+                        <TrendingDown className="w-4 h-4 text-[#246B52]" />
+                        <span>Target Price Drop Reached</span>
+                      </span>
+                      {message.alertDetails.triggeredPrice && (
+                        <span className="font-mono text-[11px] text-[#246B52] font-semibold">
+                          Now {formatINR(message.alertDetails.triggeredPrice)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[#191919] text-xs leading-relaxed">
+                      <strong>{message.alertDetails.productName}</strong> dropped from {formatINR(message.alertDetails.currentPrice)} to {formatINR(message.alertDetails.triggeredPrice || message.alertDetails.targetPrice)} (Save {formatINR(message.alertDetails.currentPrice - (message.alertDetails.triggeredPrice || message.alertDetails.targetPrice))}).
+                    </div>
+                    {onOpenBag && (
+                      <div className="pt-1 flex items-center justify-end">
+                        <button
+                          type="button"
+                          onClick={onOpenBag}
+                          className="px-3 py-1 bg-[#246B52] text-white rounded text-xs font-medium hover:bg-[#1E5843] transition-colors cursor-pointer"
+                        >
+                          View in Shopping Bag →
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Refusals: Neutral, helpful tone without aggressive red alerts */}
                 {message.isRefusal && (

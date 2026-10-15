@@ -44,11 +44,23 @@ export type DecisionReason =
   | 'product_comparison'
   | 'clarification_needed'
   | 'scope_refusal'
+  | 'price_alert'
   | 'empty_query';
 
 export interface ClarificationOption {
   label: string;
   query: string;
+}
+
+export interface PriceAlert {
+  id: string;
+  productId: string;
+  productName: string;
+  currentPrice: number;
+  targetPrice: number;
+  createdAt: string;
+  status: 'active' | 'triggered';
+  triggeredPrice?: number;
 }
 
 export interface EvidenceData {
@@ -75,6 +87,8 @@ export interface Message {
   citations?: Citation[];
   clarificationOptions?: ClarificationOption[];
   isRefusal?: boolean;
+  isPriceAlertNotification?: boolean;
+  alertDetails?: PriceAlert;
   evidence?: EvidenceData;
 }
 

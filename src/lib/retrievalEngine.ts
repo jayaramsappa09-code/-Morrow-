@@ -1,6 +1,6 @@
 import { CATALOGUE, formatINR } from '../data/catalogue';
 import { POLICIES } from '../data/policies';
-import { Product, PolicySection, Citation, EvidenceData, Message, ClarificationOption } from '../types';
+import { Product, PolicySection, Citation, EvidenceData, Message, ClarificationOption, PriceAlert } from '../types';
 
 interface QueryIntent {
   isRefusal: boolean;
@@ -12,6 +12,7 @@ interface QueryIntent {
   matchedPolicies: PolicySection[];
   isComparison: boolean;
   compareProductIds: string[];
+  isPriceAlertQuery?: boolean;
   maxPrice?: number;
   category?: 'Shirts' | 'Footwear' | 'Trousers' | 'Outerwear' | 'Accessories';
   inStockOnly?: boolean;
@@ -108,6 +109,21 @@ export function parseQuery(
       matchedPolicies: [],
       isComparison: true,
       compareProductIds,
+      keywordTerms: query.split(/\s+/)
+    };
+  }
+
+  // 3b. Price alert query check
+  const priceAlertMatch = /price alert|price drop|notify.*drop|alert.*price|track.*price/i.test(query);
+  if (priceAlertMatch) {
+    return {
+      isRefusal: false,
+      isClarification: false,
+      isPolicy: false,
+      matchedPolicies: [],
+      isComparison: false,
+      compareProductIds: [],
+      isPriceAlertQuery: true,
       keywordTerms: query.split(/\s+/)
     };
   }
@@ -254,11 +270,67 @@ export function executeCatalogueSearch(intent: QueryIntent): { products: Product
 
 export function processUserQuery(
   rawQuery: string,
-  lastEvidence?: EvidenceData
+  lastEvidence?: EvidenceData,
+  activeAlerts: PriceAlert[] = []
 ): Message {
   const intent = parseQuery(rawQuery, lastEvidence);
   const now = new Date();
   const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  // 0. PRICE ALERT QUERY HANDLING
+  if (intent.isPriceAlertQuery) {
+    if (activeAlerts.length > 0) {
+      const alertItems = activeAlerts.map(a => {
+        return `· **${a.productName}** [${a.productId}]: Current price ${formatINR(a.currentPrice)} — Alert threshold set to **≤ ${formatINR(a.targetPrice)}** (${a.status === 'triggered' ? 'Triggered' : 'Active'})`;
+      }).join('\n');
+
+      const citations: Citation[] = activeAlerts.map(a => ({
+        id: a.productId,
+        type: 'product',
+        label: `[${a.productId}]`,
+        title: a.productName,
+        targetId: a.productId,
+        preview: `Threshold ≤ ${formatINR(a.targetPrice)}`
+      }));
+
+      const evidence: EvidenceData = {
+        retrievedProductIds: activeAlerts.map(a => a.productId),
+        retrievedPolicyIds: [],
+        relevanceScores: activeAlerts.map(a => ({ id: a.productId, score: 99, label: 'Active Alert' })),
+        citationValidationStatus: 'verified',
+        decisionReason: 'price_alert',
+        decisionExplanation: `Retrieved ${activeAlerts.length} configured price alerts. The assistant monitors catalog price changes and notifies you immediately upon a price drop.`,
+        activeConstraints: {}
+      };
+
+      return {
+        id: `msg-${Date.now()}`,
+        role: 'assistant',
+        content: `You have ${activeAlerts.length} active price ${activeAlerts.length === 1 ? 'alert' : 'alerts'} configured:\n\n${alertItems}\n\nYou will receive a notification in this conversation as soon as any monitored item drops below your target threshold.`,
+        timestamp: timeString,
+        citations,
+        evidence
+      };
+    } else {
+      const evidence: EvidenceData = {
+        retrievedProductIds: [],
+        retrievedPolicyIds: [],
+        relevanceScores: [],
+        citationValidationStatus: 'verified',
+        decisionReason: 'price_alert',
+        decisionExplanation: 'No active price alerts currently found. Price alerts can be configured on any product in your Shopping Bag.',
+        activeConstraints: {}
+      };
+
+      return {
+        id: `msg-${Date.now()}`,
+        role: 'assistant',
+        content: `You currently do not have any active price alerts set.\n\nTo set a price alert on any product:\n1. Add the product to your **Shopping Bag**.\n2. Click **Set Price Alert** under the item.\n3. Choose a discount percentage (e.g. 10% or 15% off) or set a custom target price.\n\nI will monitor the catalog and notify you right here in the conversation if the price drops.`,
+        timestamp: timeString,
+        evidence
+      };
+    }
+  }
 
   // 1. REFUSAL HANDLING
   if (intent.isRefusal) {
